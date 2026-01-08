@@ -1,0 +1,59 @@
+{
+  "name": "@adverant/mageagent",
+  "version": "1.0.0",
+  "description": "Multi-Model AI Orchestration for Apple Silicon - Intelligent task routing with MLX models",
+  "keywords": [
+    "ai",
+    "llm",
+    "mlx",
+    "apple-silicon",
+    "multi-model",
+    "orchestration",
+    "qwen",
+    "hermes",
+    "local-ai",
+    "claude-code"
+  ],
+  "homepage": "https://github.com/adverant/nexus-local-mageagent#readme",
+  "bugs": {
+    "url": "https://github.com/adverant/nexus-local-mageagent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adverant/nexus-local-mageagent.git"
+  },
+  "license": "MIT",
+  "author": "Adverant <info@adverant.ai>",
+  "type": "module",
+  "bin": {
+    "mageagent": "./bin/mageagent.js"
+  },
+  "files": [
+    "bin/",
+    "mageagent/",
+    "scripts/",
+    "config/",
+    "docs/",
+    "README.md",
+    "QUICK_START.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node bin/postinstall.js",
+    "start": "node bin/mageagent.js start",
+    "stop": "node bin/mageagent.js stop",
+    "status": "node bin/mageagent.js status",
+    "install-models": "node bin/mageagent.js install",
+    "test": "node bin/mageagent.js test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "preferGlobal": true
+}
