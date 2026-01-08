@@ -1,0 +1,23 @@
+# MageAgent Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core ML Framework
+mlx>=0.22.0
+mlx-lm>=0.22.0
+
+# Web Server
+fastapi>=0.115.0
+uvicorn>=0.32.0
+pydantic>=2.0.0
+
+# Tool Execution Dependencies
+duckduckgo_search>=6.3.0  # Web search without API key
+requests>=2.31.0           # HTTP requests for web fetch
+beautifulsoup4>=4.12.0     # HTML parsing for web fetch
+
+# Optional: Constrained Generation (Phase 2)
+# Uncomment when ready to implement:
+# outlines[mlxlm]>=0.1.0
+
+# Development
+httpx>=0.27.0  # For testing

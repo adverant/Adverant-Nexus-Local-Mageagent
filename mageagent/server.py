@@ -5,8 +5,10 @@ Provides OpenAI-compatible API with intelligent model routing and validation pat
 
 Patterns:
 - mageagent:auto - Intelligent task classification and routing
+- mageagent:execute - ReAct loop with REAL tool execution (reads files, runs commands)
 - mageagent:validated - Generate + validate with correction loop
 - mageagent:compete - Competing models with judge
+- mageagent:hybrid - Qwen-72B reasoning + Hermes-3 tool extraction
 - mageagent:tools - Tool-calling specialist (Hermes-3 Q8)
 - mageagent:primary - Direct access to 72B model
 - mageagent:validator - Direct access to 7B validator
@@ -186,13 +188,23 @@ async def generate_with_model(
 
 
 def needs_tool_extraction(prompt: str) -> bool:
-    """Check if the prompt requires tool extraction"""
+    """Check if the prompt requires tool extraction - be very liberal"""
     tool_patterns = [
-        r'\bread\b.*\bfile\b', r'\bwrite\b.*\bfile\b', r'\blist\b.*\bdir',
+        r'\bread\b.*\bfile\b', r'\bwrite\b.*\bfile\b', r'\blist\b',
         r'\bexecute\b', r'\brun\b', r'\bcreate\b.*\bfile\b', r'\bdelete\b',
         r'\bsearch\b', r'\bfind\b', r'\bedit\b', r'\bmodify\b',
         r'\btool\b', r'\bfunction\b.*\bcall\b', r'\bapi\b.*\bcall\b',
-        r'\bglob\b', r'\bgrep\b', r'\bbash\b', r'\bshell\b'
+        r'\bglob\b', r'\bgrep\b', r'\bbash\b', r'\bshell\b',
+        # Filesystem-related patterns
+        r'\bfile[s]?\b', r'\bdirectory\b', r'\bfolder\b', r'\bpath\b',
+        r'/users/', r'~/', r'\.\w+$',  # Path patterns
+        # Count/listing patterns
+        r'\bhow many\b', r'\bcount\b', r'\blist\b.*\bfiles?\b',
+        # Web patterns
+        r'\bweb\b.*\bsearch\b', r'\bsearch\b.*\bweb\b', r'\bonline\b',
+        r'\binternet\b', r'\burl\b', r'\bhttp', r'\bfetch\b',
+        # Command patterns
+        r'\bcommand\b', r'\bterminal\b', r'\bcli\b'
     ]
     return any(re.search(p, prompt.lower()) for p in tool_patterns)
 
@@ -204,26 +216,41 @@ async def extract_tool_calls(user_content: str, response: str) -> list:
     """
     print("Hermes-3 Q8 extracting tool calls...")
     tool_messages = [
-        ChatMessage(role="system", content="""You are a tool-calling assistant. Based on the task and response, extract required tool calls.
+        ChatMessage(role="system", content="""You are an AGGRESSIVE tool-calling assistant. Your job is to identify what tools are needed to complete a task.
+
+ALWAYS prefer using tools over generating text explanations. If the task involves:
+- Reading/viewing files → Use Read tool
+- Running commands → Use Bash tool
+- Finding files → Use Glob or Bash with find/ls
+- Searching content → Use Grep
+- Counting files → Use Bash with find | wc -l
+- Web search → Use WebSearch
+- Fetching URLs → Use WebFetch
 
 Output tool calls as JSON array:
 [{"tool": "tool_name", "arguments": {"arg1": "value1"}}]
 
 Available tools:
-- Read: {"file_path": "path"} - Read file contents
+- Read: {"file_path": "path"} - Read file contents (use absolute paths)
 - Write: {"file_path": "path", "content": "content"} - Write to file
 - Edit: {"file_path": "path", "old_string": "text", "new_string": "text"} - Edit file
-- Bash: {"command": "shell_command"} - Execute shell command
+- Bash: {"command": "shell_command"} - Execute ANY shell command (ls, find, cat, etc.)
 - Glob: {"pattern": "**/*.py", "path": "dir"} - Find files by pattern
 - Grep: {"pattern": "regex", "path": "dir"} - Search file contents
+- WebSearch: {"query": "search terms"} - Search the web
+- WebFetch: {"url": "https://...", "prompt": "what to extract"} - Fetch and process URL
 
-If no tools are needed, output: []"""),
+IMPORTANT: If the task requires getting ACTUAL data from the filesystem or web, you MUST output tools.
+Only output [] if the task is purely conversational with no data needs.
+
+Example: "How many Python files in /foo?" → [{"tool": "Bash", "arguments": {"command": "find /foo -name '*.py' | wc -l"}}]
+Example: "List files in /bar" → [{"tool": "Bash", "arguments": {"command": "ls -la /bar"}}]"""),
         ChatMessage(role="user", content=f"""Task: {user_content}
 
-Response:
-{response}
+The model's initial response was:
+{response[:1000]}
 
-Extract tool calls (JSON array only):""")
+What tools should be executed to complete this task? Output JSON array only:""")
     ]
 
     tool_response = await generate_with_model("tools", tool_messages, 512, 0.1)
@@ -429,6 +456,116 @@ async def generate_hybrid(
     }
 
 
+async def generate_with_tool_execution(
+    messages: List[ChatMessage],
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+    max_iterations: int = 5
+) -> Dict[str, Any]:
+    """
+    ReAct loop: Generate → Extract Tools → ACTUALLY EXECUTE → Observe → Repeat
+
+    This is the key innovation: instead of just generating tool call JSON,
+    we actually execute the tools and feed real results back to the model.
+    """
+    from .tool_executor import ToolExecutor
+    executor = ToolExecutor()
+
+    current_messages = list(messages)
+    all_observations = []
+    iterations = 0
+    user_content = messages[-1].content if messages else ""
+
+    print(f"Starting ReAct loop for: {user_content[:100]}...")
+
+    while iterations < max_iterations:
+        iterations += 1
+        print(f"\n=== ReAct Iteration {iterations}/{max_iterations} ===")
+
+        # Step 1: Generate response with primary model (Qwen-72B or tools model)
+        # Use tools model for faster iteration if primary is slow
+        model_to_use = "tools" if iterations > 1 else "primary"
+        print(f"Step 1: Generating with {model_to_use} model...")
+
+        response = await generate_with_model(
+            model_to_use, current_messages, max_tokens, temperature
+        )
+
+        # Step 2: ALWAYS extract tool calls with Hermes-3 Q8 (be aggressive)
+        print("Step 2: Extracting tool calls with Hermes-3 Q8...")
+        tool_calls = await extract_tool_calls(user_content, response)
+
+        # On first iteration, be very aggressive - if no tools extracted but task seems to need them, force it
+        if iterations == 1 and not tool_calls and needs_tool_extraction(user_content):
+            print("  Forcing tool extraction for data-requiring task...")
+            tool_calls = await extract_tool_calls(
+                user_content + "\n\nIMPORTANT: This task REQUIRES using tools to get real data. Do NOT just explain - execute tools!",
+                response
+            )
+
+        if not tool_calls:
+            # No more tools needed - return final response
+            print(f"No more tools needed. Returning final response after {iterations} iterations.")
+            return {
+                "response": response,
+                "observations": all_observations,
+                "iterations": iterations,
+                "tools_executed": len(all_observations),
+                "model_flow": f"react-loop ({iterations} iterations, {len(all_observations)} tools executed)"
+            }
+
+        # Step 3: ACTUALLY EXECUTE tools and collect observations
+        print(f"Step 3: Executing {len(tool_calls)} tool(s)...")
+        observations = []
+        for i, tc in enumerate(tool_calls):
+            tool_name = tc.get("tool", "unknown")
+            print(f"  Executing [{i+1}/{len(tool_calls)}]: {tool_name}")
+
+            result = executor.execute(tc)
+            observations.append({
+                "tool": tool_name,
+                "arguments": tc.get("arguments", {}),
+                "result": result
+            })
+
+            # Log result summary
+            if "error" in result:
+                print(f"    ❌ Error: {result['error']}")
+            else:
+                result_str = str(result)[:100]
+                print(f"    ✓ Success: {result_str}...")
+
+        all_observations.extend(observations)
+
+        # Step 4: Feed REAL observations back to model
+        print("Step 4: Feeding tool results back to model...")
+        obs_text = "\n\n".join([
+            f"### Tool: {o['tool']}\n**Arguments:** {json.dumps(o['arguments'])}\n**Result:**\n```json\n{json.dumps(o['result'], indent=2)}\n```"
+            for o in observations
+        ])
+
+        current_messages.append(ChatMessage(role="assistant", content=response))
+        current_messages.append(ChatMessage(
+            role="user",
+            content=f"""Tool execution completed. Here are the REAL results:
+
+{obs_text}
+
+Based on these actual results, please continue with the task. If you have all the information you need, provide your final answer. If you need more information, specify what additional tools to call."""
+        ))
+
+    # Max iterations reached
+    print(f"Max iterations ({max_iterations}) reached.")
+    return {
+        "response": response,
+        "observations": all_observations,
+        "iterations": iterations,
+        "max_iterations_reached": True,
+        "tools_executed": len(all_observations),
+        "model_flow": f"react-loop (max {max_iterations} iterations, {len(all_observations)} tools executed)"
+    }
+
+
 # FastAPI app with lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -472,10 +609,11 @@ app.add_middleware(
 async def root():
     return {
         "name": "MageAgent Orchestrator",
-        "version": "1.1.0",
+        "version": "2.0.0",  # Major version bump for tool execution
         "models": list(MODELS.keys()),
         "endpoints": [
             "mageagent:auto - Intelligent routing",
+            "mageagent:execute - ⭐ REAL tool execution (reads files, runs commands, web search)",
             "mageagent:hybrid - Qwen-72B + Hermes-3 (best capability)",
             "mageagent:validated - Generate + validate",
             "mageagent:compete - Competing models",
@@ -483,7 +621,8 @@ async def root():
             "mageagent:primary - Direct 72B access (Q8)",
             "mageagent:validator - Direct 7B access",
             "mageagent:competitor - Direct 32B access"
-        ]
+        ],
+        "new_in_v2": "mageagent:execute - ReAct loop that ACTUALLY executes tools instead of hallucinating"
     }
 
 
@@ -492,6 +631,7 @@ async def list_models():
     """List available models (OpenAI compatible)"""
     models = [
         ModelInfo(id="mageagent:auto", created=int(time.time())),
+        ModelInfo(id="mageagent:execute", created=int(time.time())),  # NEW: Real tool execution!
         ModelInfo(id="mageagent:hybrid", created=int(time.time())),
         ModelInfo(id="mageagent:validated", created=int(time.time())),
         ModelInfo(id="mageagent:compete", created=int(time.time())),
@@ -523,7 +663,24 @@ async def chat_completions(request: ChatRequest):
     user_prompt = request.messages[-1].content if request.messages else ""
 
     try:
-        if model_name == "mageagent:validated":
+        if model_name == "mageagent:execute":
+            # ReAct loop with REAL tool execution - the key innovation!
+            # This actually reads files, runs commands, and searches the web
+            result = await generate_with_tool_execution(
+                request.messages,
+                request.max_tokens or 2048,
+                request.temperature or 0.7
+            )
+            response_text = result["response"]
+
+            # Add execution summary
+            if result.get("observations"):
+                tools_summary = ", ".join([o["tool"] for o in result["observations"]])
+                response_text += f"\n\n---\n*Executed {len(result['observations'])} tools: {tools_summary}*"
+
+            used_model = f"mageagent:execute ({result['model_flow']})"
+
+        elif model_name == "mageagent:validated":
             # Generate + validate pattern
             result = await generate_with_validation(
                 request.messages,
