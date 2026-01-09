@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="56" fill="#1a1a2e" stroke="#16213e" stroke-width="2"/>
+
+  <!-- Outer ring - representing orchestration -->
+  <circle cx="60" cy="60" r="48" fill="none" stroke="#4a90d9" stroke-width="3" stroke-dasharray="8 4"/>
+
+  <!-- Four model nodes -->
+  <circle cx="60" cy="20" r="8" fill="#00d4aa"/>  <!-- Top - Tools -->
+  <circle cx="100" cy="60" r="8" fill="#ff6b6b"/> <!-- Right - Primary -->
+  <circle cx="60" cy="100" r="8" fill="#ffd93d"/> <!-- Bottom - Validator -->
+  <circle cx="20" cy="60" r="8" fill="#6bcb77"/>  <!-- Left - Competitor -->
+
+  <!-- Connecting lines to center -->
+  <line x1="60" y1="28" x2="60" y2="45" stroke="#4a90d9" stroke-width="2"/>
+  <line x1="92" y1="60" x2="75" y2="60" stroke="#4a90d9" stroke-width="2"/>
+  <line x1="60" y1="92" x2="60" y2="75" stroke="#4a90d9" stroke-width="2"/>
+  <line x1="28" y1="60" x2="45" y2="60" stroke="#4a90d9" stroke-width="2"/>
+
+  <!-- Center orchestrator -->
+  <circle cx="60" cy="60" r="15" fill="#4a90d9"/>
+  <text x="60" y="65" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="14" font-weight="bold">M</text>
+</svg>

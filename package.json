@@ -1,20 +1,29 @@
 {
   "name": "@adverant/mageagent",
   "version": "2.0.0",
-  "description": "Multi-Model AI Orchestration for Apple Silicon - Intelligent task routing with MLX models",
+  "description": "Run 4 AI models together on Apple Silicon. Get results that rival cloud AI. Pay nothing. Forever.",
   "keywords": [
     "ai",
     "llm",
     "mlx",
     "apple-silicon",
+    "m1",
+    "m2",
+    "m3",
+    "m4",
     "multi-model",
     "orchestration",
     "qwen",
     "hermes",
     "local-ai",
+    "private-ai",
+    "offline-ai",
     "claude-code",
     "menubar",
-    "macos"
+    "macos",
+    "react-loop",
+    "tool-calling",
+    "mixture-of-agents"
   ],
   "homepage": "https://github.com/adverant/nexus-local-mageagent#readme",
   "bugs": {
