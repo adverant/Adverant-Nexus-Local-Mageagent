@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/assets/mageagent-logo.svg" alt="Adverant Logo" width="240"/>
 
-  # MageAgent
+  # Adverant Nexus - Local Apple Silicon MageAgent
 
   **Multi-Model AI Orchestration for Apple Silicon**
 
