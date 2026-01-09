@@ -17,7 +17,7 @@
   ### Download & Install
 
   [![Download DMG](https://img.shields.io/badge/Download-DMG_Installer-blue?style=for-the-badge&logo=apple)](https://github.com/adverant/nexus-local-mageagent/releases/latest/download/MageAgent-2.0.0.dmg)
-  [![npm](https://img.shields.io/badge/npm-install_--g_@adverant/mageagent-red?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/@adverant/mageagent)
+  [![npm](https://img.shields.io/badge/npm-install_--g_mageagent--local-red?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mageagent-local)
   [![Git Clone](https://img.shields.io/badge/git_clone-Source_Code-green?style=for-the-badge&logo=git)](https://github.com/adverant/nexus-local-mageagent)
 
   ---
@@ -90,7 +90,7 @@ That's it. The installer:
 
 **Or with npm:**
 ```bash
-npm install -g @adverant/mageagent && npm run setup
+npm install -g mageagent-local && mageagent setup
 ```
 
 ---

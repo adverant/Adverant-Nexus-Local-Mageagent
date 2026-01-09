@@ -1,6 +1,6 @@
 {
-  "name": "@adverant/mageagent",
-  "version": "2.0.0",
+  "name": "mageagent-local",
+  "version": "2.0.1",
   "description": "Run 4 AI models together on Apple Silicon. Get results that rival cloud AI. Pay nothing. Forever.",
   "keywords": [
     "ai",
