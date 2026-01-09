@@ -50,3 +50,8 @@ build/
 notes.md
 TODO.md
 SCRATCH.md
+
+# Claude Code instructions (internal only)
+CLAUDE.md
+claude.md
+.claude/
