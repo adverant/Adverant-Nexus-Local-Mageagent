@@ -157,6 +157,7 @@ ${COLORS.yellow}Usage:${COLORS.reset}
   mageagent <command>
 
 ${COLORS.yellow}Commands:${COLORS.reset}
+  setup       Complete setup (install + start + launch menu bar)
   install     Install MageAgent server and dependencies
   start       Start the MageAgent server
   stop        Stop the MageAgent server
@@ -167,8 +168,11 @@ ${COLORS.yellow}Commands:${COLORS.reset}
   test        Test the API endpoint
   help        Show this help message
 
+${COLORS.yellow}Quick Start:${COLORS.reset}
+  npm install -g mageagent-local && mageagent setup
+
 ${COLORS.yellow}Examples:${COLORS.reset}
-  mageagent install    # First-time setup
+  mageagent setup      # Complete first-time setup (recommended)
   mageagent start      # Start server on port 3457
   mageagent status     # Check if running
 
@@ -195,10 +199,133 @@ function testApi() {
   }
 }
 
+function installLaunchAgents() {
+  const launchAgentsDir = join(homedir(), 'Library', 'LaunchAgents');
+
+  // Server LaunchAgent
+  const serverPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.adverant.mageagent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${SERVER_SCRIPT}</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>${DEBUG_DIR}/mageagent-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>${DEBUG_DIR}/mageagent-launchd.error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>${homedir()}</string>
+    </dict>
+</dict>
+</plist>`;
+
+  // Menu Bar LaunchAgent
+  const menubarPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.adverant.mageagent.menubar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/MageAgentMenuBar.app/Contents/MacOS/MageAgentMenuBar</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>${DEBUG_DIR}/mageagent-menubar.log</string>
+    <key>StandardErrorPath</key>
+    <string>${DEBUG_DIR}/mageagent-menubar.error.log</string>
+</dict>
+</plist>`;
+
+  // Write plists
+  const serverPlistPath = join(launchAgentsDir, 'ai.adverant.mageagent.plist');
+  const menubarPlistPath = join(launchAgentsDir, 'ai.adverant.mageagent.menubar.plist');
+
+  require('fs').writeFileSync(serverPlistPath, serverPlist);
+  log('Installed server LaunchAgent (auto-start on boot)', 'green');
+
+  if (existsSync('/Applications/MageAgentMenuBar.app')) {
+    require('fs').writeFileSync(menubarPlistPath, menubarPlist);
+    log('Installed menu bar LaunchAgent (auto-start on boot)', 'green');
+
+    // Load LaunchAgents
+    try {
+      execSync(`launchctl unload "${serverPlistPath}" 2>/dev/null || true`, { stdio: 'ignore' });
+      execSync(`launchctl load "${serverPlistPath}"`, { stdio: 'ignore' });
+      execSync(`launchctl unload "${menubarPlistPath}" 2>/dev/null || true`, { stdio: 'ignore' });
+      execSync(`launchctl load "${menubarPlistPath}"`, { stdio: 'ignore' });
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+}
+
+function launchMenuBar() {
+  if (existsSync('/Applications/MageAgentMenuBar.app')) {
+    try {
+      execSync('open /Applications/MageAgentMenuBar.app', { stdio: 'ignore' });
+      log('Menu bar app launched', 'green');
+    } catch (e) {
+      log('Could not launch menu bar app', 'yellow');
+    }
+  }
+}
+
+function fullSetup() {
+  log('\n=== MageAgent Complete Setup ===\n', 'cyan');
+  checkAppleSilicon();
+  if (!checkPython()) process.exit(1);
+  ensureDirectories();
+  copyServerFiles();
+  installPythonDeps();
+  installLaunchAgents();
+
+  // Start server
+  log('\nStarting MageAgent server...', 'cyan');
+  try {
+    execSync(`${SERVER_SCRIPT} start`, { stdio: 'inherit' });
+  } catch (e) {
+    // Ignore - might already be running
+  }
+
+  // Wait for server
+  setTimeout(() => {
+    // Launch menu bar app
+    launchMenuBar();
+
+    log('\n=== Setup Complete! ===\n', 'green');
+    log('MageAgent server: http://localhost:3457', 'blue');
+    log('Menu bar icon should appear in your menu bar.', 'blue');
+    log('Both server and menu bar will auto-start on boot.\n', 'blue');
+    log('Next: Download models (~110GB) via menu: Load Models > Load All', 'yellow');
+  }, 2000);
+}
+
 // Main CLI
 const command = process.argv[2] || 'help';
 
 switch (command) {
+  case 'setup':
+    fullSetup();
+    break;
+
   case 'install':
     log('\n=== MageAgent Installation ===\n', 'cyan');
     checkAppleSilicon();
@@ -206,6 +333,7 @@ switch (command) {
     ensureDirectories();
     copyServerFiles();
     installPythonDeps();
+    installLaunchAgents();
     log('\nInstallation complete!', 'green');
     log('\nNext steps:', 'yellow');
     log('  1. Download models: mageagent models', 'reset');

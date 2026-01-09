@@ -19,16 +19,40 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
+
+# Add the mageagent directory to the path for imports
+SCRIPT_DIR = Path(__file__).parent.resolve()
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import mlx.core as mx
 from mlx_lm import load, generate
+
+# Timeout configuration per model (seconds)
+# Calculated as: (max_tokens / tokens_per_second) + buffer for model loading
+TIMEOUT_CONFIG = {
+    "tools": 120,      # Hermes-3 8B: ~50 tok/s, 2048 tokens = 41s + buffer
+    "primary": 600,    # Qwen 72B: ~8 tok/s, 2048 tokens = 256s + buffer
+    "validator": 60,   # Qwen 7B: ~105 tok/s, 2048 tokens = 20s + buffer
+    "competitor": 180, # Qwen 32B: ~25 tok/s, 2048 tokens = 82s + buffer
+}
+
+# Model loading locks for thread safety (initialized after MODELS dict)
+model_locks: Dict[str, asyncio.Lock] = {}
+
+
+class GenerationTimeoutError(Exception):
+    """Raised when model generation exceeds the configured timeout"""
+    pass
+
 
 # Model paths - using existing downloaded models
 MLX_MODELS_DIR = Path.home() / ".cache" / "mlx-models"
@@ -114,7 +138,7 @@ class ModelsResponse(BaseModel):
 
 
 def get_model(model_type: str) -> tuple:
-    """Lazy-load and cache models"""
+    """Lazy-load and cache models (synchronous - use load_model_async when possible)"""
     if model_type not in MODELS:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -134,6 +158,53 @@ def get_model(model_type: str) -> tuple:
         model_tokenizers[model_type] = tokenizer
 
     return loaded_models[model_type], model_tokenizers[model_type]
+
+
+async def load_model_async(model_type: str) -> tuple:
+    """
+    Thread-safe async model loading with lock to prevent concurrent loads.
+    This prevents Metal crashes from simultaneous model loading.
+    """
+    global model_locks
+
+    if model_type not in MODELS:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    # Fast path: model already loaded
+    if model_type in loaded_models:
+        return loaded_models[model_type], model_tokenizers[model_type]
+
+    # Initialize lock for this model type if not exists
+    if model_type not in model_locks:
+        model_locks[model_type] = asyncio.Lock()
+
+    # Acquire lock to prevent concurrent loads
+    async with model_locks[model_type]:
+        # Double-check after acquiring lock (another request may have loaded it)
+        if model_type in loaded_models:
+            return loaded_models[model_type], model_tokenizers[model_type]
+
+        model_config = MODELS[model_type]
+        model_path = model_config["path"]
+
+        if not Path(model_path).exists():
+            raise FileNotFoundError(f"Model not found at {model_path}")
+
+        print(f"Loading {model_type} model from {model_path}...")
+        start = time.time()
+
+        # Load in executor to not block event loop
+        loop = asyncio.get_event_loop()
+        model, tokenizer = await loop.run_in_executor(
+            None,
+            lambda: load(model_path)
+        )
+
+        loaded_models[model_type] = model
+        model_tokenizers[model_type] = tokenizer
+        print(f"✓ Loaded {model_type} in {time.time() - start:.1f}s")
+
+        return model, tokenizer
 
 
 def format_chat_prompt(messages: List[ChatMessage], tokenizer) -> str:
@@ -161,17 +232,12 @@ def format_chat_prompt(messages: List[ChatMessage], tokenizer) -> str:
     return prompt
 
 
-async def generate_with_model(
-    model_type: str,
-    messages: List[ChatMessage],
-    max_tokens: int = 2048,
-    temperature: float = 0.7
-) -> str:
-    """Generate response using specified model"""
-    model, tokenizer = get_model(model_type)
+async def _generate_internal(model_type: str, messages: List[ChatMessage], max_tokens: int, temperature: float) -> str:
+    """Internal generation function that does the actual work."""
+    model, tokenizer = await load_model_async(model_type)
     prompt = format_chat_prompt(messages, tokenizer)
 
-    # Run generation in a thread pool to not block
+    # Run generation in a thread pool to not block event loop
     loop = asyncio.get_event_loop()
     response = await loop.run_in_executor(
         None,
@@ -185,6 +251,42 @@ async def generate_with_model(
     )
 
     return response
+
+
+async def generate_with_model(
+    model_type: str,
+    messages: List[ChatMessage],
+    max_tokens: int = 2048,
+    temperature: float = 0.7
+) -> str:
+    """
+    Generate response using specified model with proper timeout handling.
+
+    Timeouts are configured per-model based on their generation speed:
+    - validator (7B): 60s  (~105 tok/s)
+    - tools (8B): 120s     (~50 tok/s)
+    - competitor (32B): 180s (~25 tok/s)
+    - primary (72B): 600s  (~8 tok/s)
+
+    Uses asyncio.wait_for for Python 3.9+ compatibility.
+    """
+    timeout = TIMEOUT_CONFIG.get(model_type, 300)  # Default 5 min if unknown
+
+    try:
+        # Use asyncio.wait_for for Python 3.9+ compatibility (asyncio.timeout is 3.11+)
+        response = await asyncio.wait_for(
+            _generate_internal(model_type, messages, max_tokens, temperature),
+            timeout=timeout
+        )
+        return response
+
+    except asyncio.TimeoutError:
+        raise GenerationTimeoutError(
+            f"Generation timeout after {timeout}s for model '{model_type}'. "
+            f"The {MODELS[model_type]['quant']} model at ~{MODELS[model_type]['tok_per_sec']} tok/s "
+            f"couldn't complete {max_tokens} tokens in time. "
+            f"Try reducing max_tokens or using a faster model like 'validator'."
+        )
 
 
 def needs_tool_extraction(prompt: str) -> bool:
@@ -282,7 +384,7 @@ async def execute_extracted_tools(
             "tools_executed": 0
         }
 
-    from .tool_executor import ToolExecutor
+    from tool_executor import ToolExecutor
     executor = ToolExecutor()
 
     all_observations = []
@@ -570,7 +672,7 @@ async def generate_with_tool_execution(
     This is the key innovation: instead of just generating tool call JSON,
     we actually execute the tools and feed real results back to the model.
     """
-    from .tool_executor import ToolExecutor
+    from tool_executor import ToolExecutor
     executor = ToolExecutor()
 
     current_messages = list(messages)
@@ -671,17 +773,31 @@ Based on these actual results, please continue with the task. If you have all th
 # FastAPI app with lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Pre-load validator model (smallest, always needed)
-    print("MageAgent server starting...")
+    """
+    Startup and shutdown lifecycle for MageAgent server.
+    Pre-loads critical models to avoid cold start timeouts.
+    """
+    print("=" * 60)
+    print("MageAgent Server v2.0 Starting...")
+    print("=" * 60)
     print(f"Available models: {list(MODELS.keys())}")
+    print(f"Timeout config: {TIMEOUT_CONFIG}")
 
-    # Only pre-load validator since it's small and always used
-    try:
-        print("Pre-loading validator model...")
-        get_model("validator")
-        print("Validator model ready!")
-    except Exception as e:
-        print(f"Warning: Could not pre-load validator: {e}")
+    # Pre-load critical models to avoid cold start timeouts
+    # Load smallest models first (validator, tools) - these are always needed
+    preload_models = ["validator", "tools"]
+    for model_type in preload_models:
+        try:
+            print(f"Pre-loading {model_type} model...")
+            await load_model_async(model_type)
+            print(f"✓ {model_type} model ready!")
+        except Exception as e:
+            print(f"⚠ Warning: Could not pre-load {model_type}: {e}")
+
+    print("=" * 60)
+    print(f"Server ready! Pre-loaded models: {list(loaded_models.keys())}")
+    print(f"Endpoint: http://localhost:3457")
+    print("=" * 60)
 
     yield
 
@@ -689,6 +805,7 @@ async def lifespan(app: FastAPI):
     print("MageAgent server shutting down...")
     loaded_models.clear()
     model_tokenizers.clear()
+    print("Cleanup complete.")
 
 
 app = FastAPI(
@@ -941,6 +1058,12 @@ async def chat_completions(request: ChatRequest):
 
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except GenerationTimeoutError as e:
+        print(f"Timeout: {e}")
+        raise HTTPException(
+            status_code=504,  # Gateway Timeout
+            detail=str(e)
+        )
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -948,4 +1071,10 @@ async def chat_completions(request: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=3457)
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=3457,
+        timeout_keep_alive=700,  # Must exceed longest generation time (600s for 72B)
+        limit_concurrency=4,     # Limit concurrent requests - Metal can't handle many
+    )

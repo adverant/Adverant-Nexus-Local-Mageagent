@@ -8,7 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_ROOT/dist"
-DMG_NAME="MageAgent-2.0.0"
+DMG_NAME="MageAgent-2.1.0"
 VOLUME_NAME="MageAgent Installer"
 
 # Colors
@@ -82,8 +82,8 @@ chmod +x ~/.claude/scripts/mageagent-server.sh
 echo "Installing Python dependencies..."
 pip3 install --quiet mlx mlx-lm fastapi uvicorn pydantic huggingface_hub 2>/dev/null
 
-# Create LaunchAgent for server
-echo "Setting up auto-start..."
+# Create LaunchAgent for server (auto-start on boot)
+echo "Setting up server auto-start..."
 cat > ~/Library/LaunchAgents/ai.adverant.mageagent.plist << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -111,12 +111,43 @@ PLIST
 
 launchctl load ~/Library/LaunchAgents/ai.adverant.mageagent.plist 2>/dev/null || true
 
+# Create LaunchAgent for MenuBar app (auto-start on boot)
+echo "Setting up menu bar app auto-start..."
+cat > ~/Library/LaunchAgents/ai.adverant.mageagent.menubar.plist << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.adverant.mageagent.menubar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/MageAgentMenuBar.app/Contents/MacOS/MageAgentMenuBar</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>~/.claude/debug/mageagent-menubar.log</string>
+    <key>StandardErrorPath</key>
+    <string>~/.claude/debug/mageagent-menubar.error.log</string>
+</dict>
+</plist>
+PLIST
+
+launchctl load ~/Library/LaunchAgents/ai.adverant.mageagent.menubar.plist 2>/dev/null || true
+
 # Start the server
 echo "Starting MageAgent server..."
 ~/.claude/scripts/mageagent-server.sh start
 
 # Wait for server
 sleep 3
+
+# Launch the MenuBar app now
+echo "Launching MageAgent menu bar app..."
+open /Applications/MageAgentMenuBar.app
 
 # Test
 if curl -s http://localhost:3457/health > /dev/null 2>&1; then
@@ -126,11 +157,13 @@ if curl -s http://localhost:3457/health > /dev/null 2>&1; then
     echo "=========================================="
     echo ""
     echo "MageAgent is running at: http://localhost:3457"
+    echo "Menu bar icon is now visible in your menu bar."
+    echo ""
+    echo "Both server and menu bar app will auto-start on boot."
     echo ""
     echo "Next steps:"
-    echo "  1. Open MageAgentMenuBar from Applications"
-    echo "  2. Click the menu bar icon to manage the server"
-    echo "  3. Download models (~110GB) via menu: Load Models > Load All"
+    echo "  1. Click the MageAgent menu bar icon"
+    echo "  2. Download models (~110GB) via menu: Load Models > Load All"
     echo ""
     echo "Documentation: https://github.com/adverant/nexus-local-mageagent"
 else
@@ -154,7 +187,8 @@ MageAgent - Multi-Model AI Orchestration for Apple Silicon
 Installation Steps:
 1. Drag MageAgentMenuBar.app to your Applications folder
 2. Double-click "Install MageAgent.command" to complete setup
-3. Open MageAgentMenuBar from Applications
+   - The menu bar icon will appear automatically
+   - Both server and menu bar app will auto-start on boot
 
 Requirements:
 - macOS 13.0 (Ventura) or later
@@ -165,8 +199,9 @@ Requirements:
 The installer will:
 - Download server components from GitHub
 - Install Python dependencies (MLX, FastAPI)
-- Configure auto-start on login
+- Configure auto-start on login (both server and menu bar app)
 - Start the MageAgent server
+- Launch the menu bar app immediately
 
 Models (~110GB total) are downloaded on-demand via the menu bar app.
 

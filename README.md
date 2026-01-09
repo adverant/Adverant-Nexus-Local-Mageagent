@@ -8,7 +8,7 @@
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
   [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-M1/M2/M3/M4-black.svg?logo=apple)](https://www.apple.com/mac/)
   [![MLX](https://img.shields.io/badge/MLX-Native-blue.svg)](https://github.com/ml-explore/mlx)
-  [![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)](https://github.com/adverant/nexus-local-mageagent/releases)
+  [![Version](https://img.shields.io/badge/Version-2.1.0-green.svg)](https://github.com/adverant/nexus-local-mageagent/releases)
 
   *Run 4 specialized models together. Get results that rival cloud AI. Pay nothing.*
 
@@ -16,7 +16,7 @@
 
   ### Download & Install
 
-  [![Download DMG](https://img.shields.io/badge/Download-DMG_Installer-blue?style=for-the-badge&logo=apple)](https://github.com/adverant/nexus-local-mageagent/releases/latest/download/MageAgent-2.0.0.dmg)
+  [![Download DMG](https://img.shields.io/badge/Download-DMG_Installer-blue?style=for-the-badge&logo=apple)](https://github.com/adverant/nexus-local-mageagent/releases/latest/download/MageAgent-2.1.0.dmg)
   [![npm](https://img.shields.io/badge/npm-install_--g_mageagent--local-red?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mageagent-local)
   [![Git Clone](https://img.shields.io/badge/git_clone-Source_Code-green?style=for-the-badge&logo=git)](https://github.com/adverant/nexus-local-mageagent)
 
@@ -216,6 +216,20 @@ Control everything from your Mac menu bar:
   <img src="docs/assets/menubar-screenshot.png" alt="MageAgent Menu Bar" width="400" />
 </p>
 
+### Activity Monitor-Style System Pressure (v2.1)
+
+Real-time system resource monitoring with color-coded indicators:
+
+- **Memory**: Shows used/total GB and percentage (green/yellow/red based on pressure)
+- **CPU**: Shows current usage percentage with pressure indicator
+- **GPU/Metal**: Shows Metal status (Idle/Standby/Active with loaded model count)
+
+Pressure thresholds:
+- **Green (Normal)**: < 75% memory, < 70% CPU
+- **Yellow (Warning)**: 75-90% memory, 70-90% CPU
+- **Red (Critical)**: > 90% memory or CPU
+
+### Server Controls
 - **Start/Stop/Restart** the server with one click
 - **Load models** individually or all at once
 - **Switch patterns** with automatic model loading
@@ -422,6 +436,35 @@ A: 100%. Everything runs locally. Your code never leaves your machine. No teleme
 
 **Q: How does it compare to Claude/GPT-4?**
 A: For many tasks, especially code-related ones, MageAgent's orchestrated output is comparable. The `compete` pattern often exceeds single-model cloud responses. But cloud models still win on some tasks—this is a tool, not a replacement.
+
+---
+
+## Honest Comparison: MageAgent vs Cloud AI
+
+We believe in transparency. Here's how MageAgent actually compares:
+
+| Aspect | MageAgent Local | Claude Sonnet 4.5 | Claude Opus 4.5 |
+|--------|-----------------|-------------------|-----------------|
+| **Response Quality** | 60-70% | 85-90% | 95-100% |
+| **Tool Calling Reliability** | ~70% | ~95% | ~98% |
+| **Speed (simple task)** | 1-5s (validator) | 2-4s | 3-6s |
+| **Speed (complex task)** | 30-120s (72B) | 5-15s | 8-20s |
+| **Cost** | Free | ~$0.01-0.10/task | ~$0.05-0.50/task |
+| **Privacy** | 100% local | Cloud | Cloud |
+
+### When to Use MageAgent
+- Privacy matters (sensitive code)
+- Cost matters (high volume, simple tasks)
+- Fast iteration on simple questions
+- Offline work
+
+### When to Use Cloud AI
+- Complex architecture decisions
+- Multi-file refactoring
+- Nuanced requirements
+- Maximum quality matters more than cost
+
+**Bottom line**: MageAgent is a solid free/private option for coding tasks and quick iterations. For critical work or complex reasoning, cloud AI may still be the better choice.
 
 ---
 

@@ -1,9 +1,11 @@
 import Cocoa
 import UserNotifications
+import IOKit
 
 // MARK: - MageAgent Menu Bar Application Delegate
 // Production-grade macOS menu bar application for MageAgent server management
 // Implements NSMenuItemValidation for proper menu item state management
+// Includes Activity Monitor-style system pressure indicators
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
@@ -18,8 +20,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Status checking timer
     private var statusTimer: Timer?
 
+    /// System pressure monitoring timer (faster updates)
+    private var pressureTimer: Timer?
+
     /// Server status for menu item state management
     private var isServerRunning: Bool = false
+
+    /// System pressure levels
+    private var memoryPressure: SystemPressure = .nominal
+    private var cpuUsage: Double = 0.0
+    private var gpuUsage: Double = 0.0
+
+    // MARK: - System Pressure Types
+
+    enum SystemPressure: String {
+        case nominal = "Normal"
+        case warning = "Warning"
+        case critical = "Critical"
+
+        var color: NSColor {
+            switch self {
+            case .nominal: return .systemGreen
+            case .warning: return .systemYellow
+            case .critical: return .systemRed
+            }
+        }
+
+        var indicator: String {
+            switch self {
+            case .nominal: return "●"
+            case .warning: return "●"
+            case .critical: return "●"
+            }
+        }
+    }
 
     // MARK: - Menu Item Tags (for identification)
 
@@ -34,6 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case viewLogs = 401
         case runTest = 402
         case settings = 500
+        case systemPressure = 600
+        case memoryDetail = 601
+        case cpuDetail = 602
+        case gpuDetail = 603
     }
 
     // MARK: - Configuration
@@ -111,6 +149,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Currently selected pattern
     private var selectedPattern: String = "mageagent:auto"
 
+    /// System memory info cache
+    private var lastMemoryInfo: (used: UInt64, total: UInt64, pressure: String) = (0, 0, "nominal")
+
+    /// Previous CPU ticks for delta calculation
+    private var previousCPUTicks: (user: UInt64, system: UInt64, idle: UInt64, nice: UInt64) = (0, 0, 0, 0)
+
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -130,6 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         checkServerStatus()
         startStatusTimer()
 
+        // Start system pressure monitoring (every 2 seconds)
+        startPressureTimer()
+
         debugLog("Application initialization complete")
     }
 
@@ -137,6 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         debugLog("Application terminating - cleaning up")
         statusTimer?.invalidate()
         statusTimer = nil
+        pressureTimer?.invalidate()
+        pressureTimer = nil
     }
 
     // MARK: - UI Setup
@@ -177,6 +226,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusMenuItem.tag = MenuItemTag.status.rawValue
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // System Pressure Section - Activity Monitor style
+        let pressureHeader = NSMenuItem(title: "System Resources", action: nil, keyEquivalent: "")
+        pressureHeader.tag = MenuItemTag.systemPressure.rawValue
+        pressureHeader.isEnabled = false
+
+        // Create attributed string with colored indicator
+        let pressureAttr = NSMutableAttributedString(string: "● ", attributes: [.foregroundColor: NSColor.systemGreen])
+        pressureAttr.append(NSAttributedString(string: "System Resources", attributes: [.foregroundColor: NSColor.labelColor]))
+        pressureHeader.attributedTitle = pressureAttr
+
+        menu.addItem(pressureHeader)
+
+        // Memory detail item
+        let memoryItem = NSMenuItem(title: "  Memory: Checking...", action: nil, keyEquivalent: "")
+        memoryItem.tag = MenuItemTag.memoryDetail.rawValue
+        memoryItem.isEnabled = false
+        menu.addItem(memoryItem)
+
+        // CPU detail item
+        let cpuItem = NSMenuItem(title: "  CPU: Checking...", action: nil, keyEquivalent: "")
+        cpuItem.tag = MenuItemTag.cpuDetail.rawValue
+        cpuItem.isEnabled = false
+        menu.addItem(cpuItem)
+
+        // GPU/Metal detail item
+        let gpuItem = NSMenuItem(title: "  GPU/Metal: Checking...", action: nil, keyEquivalent: "")
+        gpuItem.tag = MenuItemTag.gpuDetail.rawValue
+        gpuItem.isEnabled = false
+        menu.addItem(gpuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -1302,6 +1383,249 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 toastWindow.close()
             }
         }
+    }
+
+    // MARK: - System Pressure Monitoring
+
+    /// Start the pressure monitoring timer
+    private func startPressureTimer() {
+        pressureTimer?.invalidate()
+        pressureTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.updateSystemPressure()
+        }
+        // Add to common run loop mode
+        RunLoop.current.add(pressureTimer!, forMode: .common)
+
+        // Initial update
+        updateSystemPressure()
+    }
+
+    /// Update all system pressure indicators
+    private func updateSystemPressure() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+
+            // Get memory info
+            let memInfo = self.getMemoryInfo()
+
+            // Get CPU usage
+            let cpuUsage = self.getCPUUsage()
+
+            // Get GPU info via Metal/powermetrics
+            let gpuInfo = self.getGPUInfo()
+
+            DispatchQueue.main.async {
+                self.updatePressureMenuItems(memory: memInfo, cpu: cpuUsage, gpu: gpuInfo)
+            }
+        }
+    }
+
+    /// Get memory information using vm_statistics64
+    private func getMemoryInfo() -> (usedGB: Double, totalGB: Double, pressure: SystemPressure, percentUsed: Double) {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+
+        let hostPort = mach_host_self()
+        let result = withUnsafeMutablePointer(to: &stats) { statsPtr in
+            statsPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                host_statistics64(hostPort, HOST_VM_INFO64, intPtr, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else {
+            return (0, 0, .nominal, 0)
+        }
+
+        let pageSize = UInt64(vm_kernel_page_size)
+
+        // Calculate memory usage
+        let active = UInt64(stats.active_count) * pageSize
+        let wired = UInt64(stats.wire_count) * pageSize
+        let compressed = UInt64(stats.compressor_page_count) * pageSize
+
+        // Used = Active + Wired + Compressed (similar to Activity Monitor "Memory Used")
+        let used = active + wired + compressed
+
+        // Get total physical memory
+        var totalMemory: UInt64 = 0
+        var size = MemoryLayout<UInt64>.size
+        sysctlbyname("hw.memsize", &totalMemory, &size, nil, 0)
+
+        let usedGB = Double(used) / (1024 * 1024 * 1024)
+        let totalGB = Double(totalMemory) / (1024 * 1024 * 1024)
+        let percentUsed = (Double(used) / Double(totalMemory)) * 100
+
+        // Determine pressure level based on percentage
+        // Apple Silicon typically shows warning around 80%, critical around 90%
+        let pressure: SystemPressure
+        if percentUsed >= 90 {
+            pressure = .critical
+        } else if percentUsed >= 75 {
+            pressure = .warning
+        } else {
+            pressure = .nominal
+        }
+
+        return (usedGB, totalGB, pressure, percentUsed)
+    }
+
+    /// Get CPU usage using host_processor_info
+    private func getCPUUsage() -> (usage: Double, pressure: SystemPressure) {
+        var numCPUs: natural_t = 0
+        var cpuInfo: processor_info_array_t?
+        var numCPUInfo: mach_msg_type_number_t = 0
+
+        let result = host_processor_info(mach_host_self(),
+                                         PROCESSOR_CPU_LOAD_INFO,
+                                         &numCPUs,
+                                         &cpuInfo,
+                                         &numCPUInfo)
+
+        guard result == KERN_SUCCESS, let cpuInfo = cpuInfo else {
+            return (0, .nominal)
+        }
+
+        var totalUser: UInt64 = 0
+        var totalSystem: UInt64 = 0
+        var totalIdle: UInt64 = 0
+        var totalNice: UInt64 = 0
+
+        for i in 0..<Int32(numCPUs) {
+            let offset = Int(i) * Int(CPU_STATE_MAX)
+            totalUser += UInt64(cpuInfo[offset + Int(CPU_STATE_USER)])
+            totalSystem += UInt64(cpuInfo[offset + Int(CPU_STATE_SYSTEM)])
+            totalIdle += UInt64(cpuInfo[offset + Int(CPU_STATE_IDLE)])
+            totalNice += UInt64(cpuInfo[offset + Int(CPU_STATE_NICE)])
+        }
+
+        // Calculate delta from previous
+        let userDelta = totalUser - previousCPUTicks.user
+        let systemDelta = totalSystem - previousCPUTicks.system
+        let idleDelta = totalIdle - previousCPUTicks.idle
+        let niceDelta = totalNice - previousCPUTicks.nice
+
+        // Store current values for next calculation
+        previousCPUTicks = (totalUser, totalSystem, totalIdle, totalNice)
+
+        let totalDelta = userDelta + systemDelta + idleDelta + niceDelta
+        guard totalDelta > 0 else {
+            return (0, .nominal)
+        }
+
+        let usage = Double(userDelta + systemDelta + niceDelta) / Double(totalDelta) * 100
+
+        // Deallocate
+        let cpuInfoSize = vm_size_t(numCPUInfo) * vm_size_t(MemoryLayout<integer_t>.size)
+        vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), cpuInfoSize)
+
+        // Determine pressure
+        let pressure: SystemPressure
+        if usage >= 90 {
+            pressure = .critical
+        } else if usage >= 70 {
+            pressure = .warning
+        } else {
+            pressure = .nominal
+        }
+
+        return (usage, pressure)
+    }
+
+    /// Get GPU/Metal information
+    private func getGPUInfo() -> (description: String, pressure: SystemPressure) {
+        // For Apple Silicon, GPU is part of the unified memory
+        // We can estimate GPU pressure based on memory pressure when models are loaded
+
+        // Check if any large models are loaded (primary = 72B uses ~77GB)
+        let hasLargeModelLoaded = loadedModels.contains("mageagent:primary")
+
+        // Get memory pressure to infer GPU pressure (unified memory)
+        let memInfo = getMemoryInfo()
+
+        // If large model is loaded and memory pressure is high, GPU is likely under pressure
+        var pressure: SystemPressure = .nominal
+        var description = "Metal: Idle"
+
+        if isServerRunning {
+            if hasLargeModelLoaded {
+                description = "Metal: Active (72B loaded)"
+                if memInfo.pressure == .critical {
+                    pressure = .critical
+                    description = "Metal: Heavy Load (72B)"
+                } else if memInfo.pressure == .warning {
+                    pressure = .warning
+                    description = "Metal: Moderate (72B)"
+                }
+            } else if !loadedModels.isEmpty {
+                let modelCount = loadedModels.count
+                description = "Metal: Active (\(modelCount) model\(modelCount > 1 ? "s" : ""))"
+            } else {
+                description = "Metal: Standby"
+            }
+        }
+
+        return (description, pressure)
+    }
+
+    /// Update the menu items with current pressure information
+    private func updatePressureMenuItems(memory: (usedGB: Double, totalGB: Double, pressure: SystemPressure, percentUsed: Double),
+                                         cpu: (usage: Double, pressure: SystemPressure),
+                                         gpu: (description: String, pressure: SystemPressure)) {
+        // Determine overall system pressure (worst of all)
+        let overallPressure: SystemPressure
+        if memory.pressure == .critical || cpu.pressure == .critical || gpu.pressure == .critical {
+            overallPressure = .critical
+        } else if memory.pressure == .warning || cpu.pressure == .warning || gpu.pressure == .warning {
+            overallPressure = .warning
+        } else {
+            overallPressure = .nominal
+        }
+
+        // Update header with overall pressure
+        if let headerItem = menu.item(withTag: MenuItemTag.systemPressure.rawValue) {
+            let headerAttr = NSMutableAttributedString(string: "\(overallPressure.indicator) ", attributes: [.foregroundColor: overallPressure.color])
+            headerAttr.append(NSAttributedString(string: "System Resources", attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 13, weight: .medium)
+            ]))
+            headerItem.attributedTitle = headerAttr
+        }
+
+        // Update memory detail - use labelColor for readability in both light/dark mode
+        if let memItem = menu.item(withTag: MenuItemTag.memoryDetail.rawValue) {
+            let memText = String(format: "Memory: %.1f / %.1f GB (%.0f%%)", memory.usedGB, memory.totalGB, memory.percentUsed)
+            let memAttr = NSMutableAttributedString(string: "  \(memory.pressure.indicator) ", attributes: [.foregroundColor: memory.pressure.color])
+            memAttr.append(NSAttributedString(string: memText, attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            ]))
+            memItem.attributedTitle = memAttr
+        }
+
+        // Update CPU detail - use labelColor for readability
+        if let cpuItem = menu.item(withTag: MenuItemTag.cpuDetail.rawValue) {
+            let cpuText = String(format: "CPU: %.1f%%", cpu.usage)
+            let cpuAttr = NSMutableAttributedString(string: "  \(cpu.pressure.indicator) ", attributes: [.foregroundColor: cpu.pressure.color])
+            cpuAttr.append(NSAttributedString(string: cpuText, attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            ]))
+            cpuItem.attributedTitle = cpuAttr
+        }
+
+        // Update GPU detail - use labelColor for readability
+        if let gpuItem = menu.item(withTag: MenuItemTag.gpuDetail.rawValue) {
+            let gpuAttr = NSMutableAttributedString(string: "  \(gpu.pressure.indicator) ", attributes: [.foregroundColor: gpu.pressure.color])
+            gpuAttr.append(NSAttributedString(string: gpu.description, attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 12, weight: .regular)
+            ]))
+            gpuItem.attributedTitle = gpuAttr
+        }
+
+        // Store current values
+        memoryPressure = memory.pressure
+        cpuUsage = cpu.usage
     }
 
     // MARK: - Debug Logging

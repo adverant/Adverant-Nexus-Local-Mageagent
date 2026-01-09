@@ -66,7 +66,7 @@ graph TB
     EXEC --> TE
 ```
 
-## Menu Bar App Architecture
+## Menu Bar App Architecture (v2.1)
 
 ```mermaid
 graph TB
@@ -77,11 +77,18 @@ graph TB
 
         subgraph "Menu Items"
             ST[Status Display]
+            SP[System Pressure<br/>● Memory / CPU / GPU]
             SC[Server Control<br/>Start/Stop/Restart]
             WM[Warmup Models]
             LM[Load Models Submenu]
             PT[Patterns Submenu]
             UT[Utilities<br/>Docs/Logs/Test/Settings]
+        end
+
+        subgraph "System Monitoring"
+            MT[Memory Monitor<br/>vm_statistics64]
+            CT[CPU Monitor<br/>host_processor_info]
+            GT[GPU/Metal Monitor<br/>Unified Memory]
         end
 
         subgraph "Windows"
@@ -100,11 +107,19 @@ graph TB
     AD --> SI
     SI --> MN
     MN --> ST
+    MN --> SP
     MN --> SC
     MN --> WM
     MN --> LM
     MN --> PT
     MN --> UT
+
+    AD --> MT
+    AD --> CT
+    AD --> GT
+    MT --> SP
+    CT --> SP
+    GT --> SP
 
     AD --> TW
     AD --> SW
@@ -113,6 +128,56 @@ graph TB
     SC --> SCR
     AD --> SRV
     UT --> LOG
+```
+
+## Timeout Architecture (v2.1)
+
+```mermaid
+flowchart TD
+    subgraph "Request Flow with Timeout"
+        REQ[API Request] --> GEN[generate_with_model]
+        GEN --> LOCK{Acquire<br/>asyncio.Lock}
+        LOCK --> LOAD[load_model_async]
+        LOAD --> WAIT[asyncio.wait_for<br/>with timeout]
+
+        WAIT --> |Success| RESP[Return Response]
+        WAIT --> |Timeout| ERR[GenerationTimeoutError]
+
+        ERR --> HTTP504[HTTP 504<br/>Gateway Timeout]
+        RESP --> HTTP200[HTTP 200<br/>Success]
+    end
+
+    subgraph "Timeout Configuration"
+        CFG[TIMEOUT_CONFIG]
+        CFG --> |validator| T60[60 seconds]
+        CFG --> |tools| T120[120 seconds]
+        CFG --> |competitor| T180[180 seconds]
+        CFG --> |primary| T600[600 seconds]
+    end
+
+    GEN --> CFG
+```
+
+## System Pressure Monitoring
+
+```mermaid
+graph TB
+    subgraph "System Pressure Indicators"
+        direction LR
+        GREEN[● Green<br/>Normal<br/>Memory < 75%<br/>CPU < 70%]
+        YELLOW[● Yellow<br/>Warning<br/>Memory 75-90%<br/>CPU 70-90%]
+        RED[● Red<br/>Critical<br/>Memory > 90%<br/>CPU > 90%]
+    end
+
+    subgraph "Data Sources"
+        MEM[vm_statistics64<br/>active + wired + compressed]
+        CPU[host_processor_info<br/>user + system + nice ticks]
+        GPU[Loaded Models<br/>Unified Memory Usage]
+    end
+
+    MEM --> |used/total GB| GREEN
+    CPU --> |usage %| GREEN
+    GPU --> |model count| GREEN
 ```
 
 ## Pattern Flow Diagrams
