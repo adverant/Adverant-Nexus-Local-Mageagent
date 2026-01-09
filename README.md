@@ -1,246 +1,287 @@
 # Nexus Local MageAgent
 
-> **Multi-Model AI Orchestration for Apple Silicon - Intelligent task routing with MLX models**
+> **Multi-Model AI Orchestration for Apple Silicon - Opus 4.5-level performance with local models**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-M4_Max-success.svg)](https://www.apple.com/mac/)
+[![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-M1/M2/M3/M4-success.svg)](https://www.apple.com/mac/)
 [![MLX](https://img.shields.io/badge/MLX-Native-blue.svg)](https://github.com/ml-explore/mlx)
+[![Version](https://img.shields.io/badge/Version-2.0.0-blue.svg)](https://github.com/adverant/nexus-local-mageagent/releases)
 
-## Overview
+## Mission
 
-Nexus Local MageAgent provides **intelligent multi-model orchestration** using Apple's MLX framework for native Apple Silicon performance. Instead of manual model switching, MageAgent automatically routes tasks to the optimal model combination:
+**Achieve Claude Opus 4.5-level performance using local models on Apple Silicon.**
 
-- **Qwen-72B Q8** - Superior reasoning, planning, complex analysis (77GB)
-- **Qwen-32B Q4** - Code generation specialist (18GB)
-- **Qwen-7B Q4** - Fast validation and judging (5GB)
-- **Hermes-3 Q8** - Tool calling specialist (9GB)
+MageAgent combines multiple specialized models through intelligent orchestration to match or exceed cloud AI quality while keeping everything private and free.
 
-### Key Innovation: Hermes-3 Tool Routing
+## What's New in v2.0
 
-All MageAgent patterns route tool extraction through **Hermes-3 Q8**, ensuring reliable function calling regardless of which reasoning model generates the response. Q8 quantization preserves tool-calling capability that Q4 breaks.
+- **Native Menu Bar App** - Control MageAgent from your Mac menu bar
+- **Real Tool Execution** - ReAct loop for actual file/web/command access
+- **Streaming Test Runner** - Visual test feedback with colored results
+- **Pattern-Based Model Loading** - Auto-load required models per pattern
+- **Claude Code Integration** - Hooks, slash commands, VSCode support
+- **One-Command Installation** - Complete setup with `./scripts/install.sh`
+
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/adverant/nexus-local-mageagent.git
+cd nexus-local-mageagent
+./scripts/install.sh
+
+# Or with npm
+npm install -g @adverant/mageagent
+npm run setup
+```
+
+That's it! MageAgent will:
+1. Install Python dependencies (MLX, FastAPI)
+2. Build and install the menu bar app
+3. Set up Claude Code hooks and commands
+4. Configure auto-start on login
+5. Download MLX models (~109GB, optional)
+6. Start the server
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     MageAgent Orchestrator                       │
-│                        (Port 3457)                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │ mageagent:   │    │ mageagent:   │    │ mageagent:   │       │
-│  │   hybrid     │    │  validated   │    │   compete    │       │
-│  │              │    │              │    │              │       │
-│  │ 72B + Hermes │    │ 72B + 7B +   │    │ 72B + 32B +  │       │
-│  │              │    │   Hermes     │    │ 7B + Hermes  │       │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
-│         │                   │                   │               │
-│         └───────────────────┴───────────────────┘               │
-│                             │                                    │
-│                             ▼                                    │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                   MLX Model Pool                          │   │
-│  │                                                           │   │
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────┐ │   │
-│  │  │ Qwen-72B   │ │ Qwen-32B   │ │ Qwen-7B    │ │Hermes-3│ │   │
-│  │  │ Q8 (77GB)  │ │ Q4 (18GB)  │ │ Q4 (5GB)   │ │Q8 (9GB)│ │   │
-│  │  │ Reasoning  │ │ Coding     │ │ Validation │ │ Tools  │ │   │
-│  │  └────────────┘ └────────────┘ └────────────┘ └────────┘ │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        MageAgent System                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌────────────────────┐     ┌────────────────────┐                      │
+│  │   Menu Bar App     │     │   Claude Code CLI  │                      │
+│  │ MageAgentMenuBar   │     │  /mage commands    │                      │
+│  └─────────┬──────────┘     └─────────┬──────────┘                      │
+│            │                          │                                  │
+│            └──────────┬───────────────┘                                  │
+│                       ▼                                                  │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │              MageAgent Server (localhost:3457)                   │    │
+│  ├─────────────────────────────────────────────────────────────────┤    │
+│  │                                                                  │    │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │    │
+│  │  │  auto    │ │ execute  │ │  hybrid  │ │validated │ │compete │ │    │
+│  │  │ routing  │ │ ReAct    │ │ 72B+8B   │ │ 72B+7B   │ │72B+32B │ │    │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └────────┘ │    │
+│  │                                                                  │    │
+│  │  ┌─────────────────────────────────────────────────────────────┐│    │
+│  │  │                    Tool Executor                            ││    │
+│  │  │  Read Files │ Write Files │ Bash │ Glob │ Grep │ WebSearch ││    │
+│  │  └─────────────────────────────────────────────────────────────┘│    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                       │                                                  │
+│                       ▼                                                  │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                     MLX Model Pool                               │    │
+│  │                                                                  │    │
+│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────────┐  │    │
+│  │  │ Qwen-72B   │ │ Qwen-32B   │ │ Qwen-7B    │ │  Hermes-3    │  │    │
+│  │  │ Q8 (77GB)  │ │ Q4 (18GB)  │ │ Q4 (5GB)   │ │  Q8 (9GB)    │  │    │
+│  │  │ Reasoning  │ │ Coding     │ │ Validation │ │ Tool Calling │  │    │
+│  │  └────────────┘ └────────────┘ └────────────┘ └──────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Menu Bar App
+
+The native macOS menu bar app provides easy control of MageAgent:
+
+- **Server Control**: Start/Stop/Restart with one click
+- **Model Loading**: Load individual models or all at once
+- **Pattern Selection**: Choose patterns with auto-model loading
+- **Live Status**: See server status and loaded models
+- **Test Runner**: Streaming test results with visual feedback
+- **Quick Access**: Open API docs, view logs, access settings
+
+See [docs/MENUBAR_APP.md](docs/MENUBAR_APP.md) for full documentation.
 
 ## Orchestration Patterns
 
-| Pattern | Models | Flow | Use Case |
-|---------|--------|------|----------|
-| `mageagent:hybrid` | 72B Q8 + Hermes Q8 | Reasoning → Tool Extraction | Best capability |
-| `mageagent:validated` | 72B Q8 + 7B + Hermes Q8 | Generate → Validate → Fix → Tools | Code with error checking |
-| `mageagent:compete` | 72B + 32B + 7B + Hermes Q8 | Two solutions → Judge → Best + Tools | Critical decisions |
-| `mageagent:auto` | Dynamic | Routes based on task type | Automatic optimization |
-| `mageagent:tools` | Hermes-3 Q8 | Direct tool calling | Fast function execution |
-| `mageagent:primary` | Qwen-72B Q8 | Direct reasoning | Complex analysis |
+| Pattern | Models | Quality Boost | Use Case |
+|---------|--------|---------------|----------|
+| `auto` | Dynamic | Variable | Intelligent task routing |
+| `execute` | 72B + 8B | +0% | **Real file/web/command access** |
+| `hybrid` | 72B + 8B | +5% | Complex reasoning + tools |
+| `validated` | 72B + 7B | +5-10% | Code with error checking |
+| `compete` | 72B + 32B + 7B | +10-15% | Critical/security code |
 
-### Pattern Details
+### Execute Pattern (NEW in v2.0)
 
-#### Hybrid (Recommended)
+The `execute` pattern provides **real tool execution** - not simulated:
+
 ```
-User Request → Qwen-72B Q8 (reasoning) → Hermes-3 Q8 (tool extraction) → Response + Tool Calls
-```
-Best for: Tasks requiring both reasoning AND tool execution
+User: "Read ~/.zshrc and tell me what plugins are configured"
 
-#### Validated
+MageAgent Execute Flow:
+1. Qwen-72B: "I need to read the file"
+2. Hermes-3: Extracts tool call → {"tool": "Read", "path": "~/.zshrc"}
+3. Tool Executor: Actually reads the file
+4. Qwen-72B: "Based on the contents, you have oh-my-zsh with plugins: git, docker, kubectl..."
 ```
-User Request → Qwen-72B Q8 → Qwen-7B (validate) → [Fix if needed] → Hermes-3 Q8 (tools) → Response
-```
-Best for: Code generation where correctness matters (+5-10% quality)
 
-#### Compete
-```
-User Request → Qwen-72B Q8 ──┐
-                             ├→ Qwen-7B (judge) → Winner → Hermes-3 Q8 (tools) → Response
-User Request → Qwen-32B Q4 ──┘
-```
-Best for: Critical code where multiple perspectives improve quality (+10-15% quality)
+## Claude Code Integration
 
-## Quick Start
-
-### Prerequisites
-- Apple Silicon Mac (M1/M2/M3/M4)
-- 128GB+ Unified Memory recommended
-- Python 3.9+
-- MLX framework
-
-### Installation
+### Slash Commands
 
 ```bash
-# Clone the repository
-git clone https://github.com/adverant/nexus-local-mageagent.git
-cd nexus-local-mageagent
-
-# Run setup
-./scripts/install.sh
-
-# Start MageAgent server
-~/.claude/scripts/mageagent-server.sh start
+/mage hybrid      # Switch to hybrid pattern
+/mage execute     # Switch to execute pattern (real tools)
+/mage compete     # Switch to compete pattern
+/mageagent status # Check server status
+/warmup all       # Preload all models
 ```
 
-### Model Downloads
+### Natural Language
 
-The installer will download MLX models (~110GB total):
-
-| Model | Size | Purpose |
-|-------|------|---------|
-| Qwen2.5-72B-Instruct-8bit | 77GB | Primary reasoning (Q8 for tools) |
-| Qwen2.5-Coder-32B-4bit | 18GB | Code generation |
-| Qwen2.5-Coder-7B-4bit | 5GB | Fast validation |
-| Hermes-3-Llama-3.1-8B-8bit | 9GB | Tool calling specialist |
-
-### Usage
-
-#### Via Claude Code
-```bash
-# Switch to MageAgent
-/model mageagent,mageagent:hybrid
-
-# Natural language switching
+```
 "use mage hybrid"
-"use best local"
+"use best local for this"
+"mage this code"
+"use local ai for security review"
 ```
 
-#### API Endpoint
+### VSCode Integration
+
+MageAgent integrates with the Claude Code VSCode extension:
+- Automatic model routing
+- Hook integration for tool calls
+- Custom instructions for patterns
+
+## Installation Options
+
+### Full Installation (Recommended)
+
+```bash
+./scripts/install.sh
+```
+
+### Minimal Installation (Skip models)
+
+```bash
+./scripts/install.sh --skip-models
+```
+
+### Server Only
+
+```bash
+./scripts/install.sh --server-only
+```
+
+### npm Installation
+
+```bash
+npm install -g @adverant/mageagent
+npm run install:all
+```
+
+## API Usage
+
+### Health Check
+
+```bash
+curl http://localhost:3457/health
+```
+
+### Chat Completion
+
 ```bash
 curl -X POST http://localhost:3457/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "mageagent:hybrid",
-    "messages": [{"role": "user", "content": "Read and refactor /path/to/file.py"}]
+    "model": "mageagent:execute",
+    "messages": [{"role": "user", "content": "Read /etc/hosts and summarize"}]
   }'
 ```
 
-## Model Quantization & Tool Calling
+### Available Models
 
-**Critical Insight**: Q8 quantization preserves tool-calling capability, Q4 breaks it.
+```bash
+curl http://localhost:3457/v1/models
+```
 
-| Model | Quantization | Tool Calling | Purpose |
-|-------|--------------|--------------|---------|
-| Hermes-3-8B | Q8_0 | Yes | Tool calling specialist |
-| Qwen-72B | Q8_0 | Yes | Reasoning with tools |
-| Qwen-32B | Q4_K_M | No | Code generation only |
-| Qwen-7B | Q4_K_M | No | Validation only |
+## Requirements
 
-This is why MageAgent routes ALL tool extraction through Hermes-3 Q8 - it guarantees reliable function calling regardless of which model generated the reasoning.
+- **macOS**: 13.0 (Ventura) or later
+- **Chip**: Apple Silicon (M1/M2/M3/M4)
+- **RAM**: 64GB minimum, 128GB+ recommended
+- **Storage**: ~120GB for models + app
+- **Python**: 3.9+
+
+### Memory Requirements by Pattern
+
+| Pattern | Minimum RAM | Models Loaded |
+|---------|-------------|---------------|
+| `auto` | 8GB | 7B only (routes others) |
+| `execute` | 90GB | 72B + 8B |
+| `hybrid` | 90GB | 72B + 8B |
+| `validated` | 85GB | 72B + 7B |
+| `compete` | 105GB | 72B + 32B + 7B |
 
 ## Performance
 
-On M4 Max (128GB):
+On M4 Max (128GB Unified Memory):
 
-| Model | Tokens/sec | Load Time |
-|-------|------------|-----------|
-| Hermes-3 Q8 | ~50 tok/s | 1.5s |
-| Qwen-7B Q4 | ~105 tok/s | 0.8s |
-| Qwen-32B Q4 | ~25 tok/s | 3s |
-| Qwen-72B Q8 | ~8 tok/s | 8s |
+| Metric | Value |
+|--------|-------|
+| Hermes-3 Q8 | ~50 tok/s |
+| Qwen-7B Q4 | ~105 tok/s |
+| Qwen-32B Q4 | ~25 tok/s |
+| Qwen-72B Q8 | ~8 tok/s |
+| Execute pattern | 30-60s typical |
+| Compete pattern | 60-120s typical |
 
-Pattern completion times (typical):
-- `mageagent:tools`: 3-5s
-- `mageagent:hybrid`: 30-60s
-- `mageagent:validated`: 40-80s
-- `mageagent:compete`: 60-120s
+## Quality Comparison
 
-## Configuration
+| Task Type | Single Model | MageAgent Pattern | Improvement |
+|-----------|--------------|-------------------|-------------|
+| Complex reasoning | Baseline | hybrid | +5% |
+| Code generation | Baseline | validated | +5-10% |
+| Security code | Baseline | compete | +10-15% |
+| Tool execution | Unreliable | execute | Guaranteed |
 
-### Router Config (`~/.claude-code-router/config.json`)
-```json
-{
-  "providers": [
-    {
-      "name": "mageagent",
-      "api_base_url": "http://localhost:3457/v1/chat/completions",
-      "api_key": "local",
-      "models": [
-        "mageagent:auto",
-        "mageagent:hybrid",
-        "mageagent:validated",
-        "mageagent:compete",
-        "mageagent:tools",
-        "mageagent:primary",
-        "mageagent:validator",
-        "mageagent:competitor"
-      ]
-    }
-  ]
-}
-```
+## Documentation
 
-### Server Management
-```bash
-# Start server
-~/.claude/scripts/mageagent-server.sh start
-
-# Stop server
-~/.claude/scripts/mageagent-server.sh stop
-
-# Check status
-~/.claude/scripts/mageagent-server.sh status
-
-# View logs
-~/.claude/scripts/mageagent-server.sh logs
-```
-
-## Integration with Nexus
-
-MageAgent is part of the Nexus AI platform:
-
-- **Nexus GraphRAG** - Long-term memory across sessions
-- **Nexus Skills Engine** - Custom workflow automation
-- **Nexus Dashboard** - Monitoring and analytics
-- **Nexus Local MageAgent** - Multi-model orchestration
-
-## Comparison: MageAgent vs Single Model
-
-| Aspect | Single Model | MageAgent |
-|--------|--------------|-----------|
-| Quality | Baseline | +5-15% (validated/compete) |
-| Tool Calling | Unreliable at Q4 | Guaranteed via Hermes Q8 |
-| Cost | Cloud: $$$/Local: Free | Local: Free |
-| Privacy | Cloud: No/Local: Yes | Full local privacy |
-| Latency | Fast | Slower (orchestration) |
-| Flexibility | One model | Dynamic routing |
+- [Quick Start Guide](QUICK_START.md)
+- [Menu Bar App](docs/MENUBAR_APP.md)
+- [Orchestration Patterns](docs/PATTERNS.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Auto-Start Setup](docs/AUTOSTART.md)
+- [VSCode Setup](docs/VSCODE_SETUP.md)
+- [Architecture Diagrams](docs/diagrams/architecture.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Roadmap
 
-- [ ] Streaming responses
-- [ ] Parallel model execution (when Metal supports it)
-- [ ] Custom orchestration patterns
+- [x] Multi-model orchestration
+- [x] Native menu bar app
+- [x] Real tool execution (ReAct)
+- [x] Claude Code integration
+- [x] Streaming test runner
 - [ ] MCP tool server integration
-- [ ] Web UI for monitoring
+- [ ] Web UI dashboard
 - [ ] Ollama backend option
+- [ ] Custom pattern builder
+- [ ] Distributed model loading
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Quick Links
+
+- [Report Bug](https://github.com/adverant/nexus-local-mageagent/issues/new?template=bug_report.md)
+- [Request Feature](https://github.com/adverant/nexus-local-mageagent/issues/new?template=feature_request.md)
+- [Discussions](https://github.com/adverant/nexus-local-mageagent/discussions)
+
+## Community
+
+- **Discord**: [Join our server](https://discord.gg/adverant)
+- **Twitter**: [@AdverantAI](https://twitter.com/AdverantAI)
+- **Blog**: [adverant.ai/blog](https://adverant.ai/blog)
 
 ## License
 
@@ -249,12 +290,17 @@ MIT License - see [LICENSE](LICENSE)
 ## Acknowledgments
 
 - [MLX](https://github.com/ml-explore/mlx) - Apple's ML framework
-- [Qwen](https://github.com/QwenLM/Qwen2.5) - Base models
+- [Qwen](https://github.com/QwenLM/Qwen2.5) - Base models from Alibaba
 - [NousResearch](https://nousresearch.com/) - Hermes-3 model
 - Together AI research on Mixture of Agents
+- The Claude Code and Anthropic teams
 
 ---
 
-**Made with care by [Adverant](https://github.com/adverant)**
-
-*Local AI orchestration for serious developers*
+<p align="center">
+  <strong>Made with care by <a href="https://adverant.ai">Adverant</a></strong>
+  <br>
+  <em>Local AI orchestration for serious developers</em>
+  <br><br>
+  <a href="https://github.com/adverant/nexus-local-mageagent/stargazers">Star us on GitHub</a>
+</p>

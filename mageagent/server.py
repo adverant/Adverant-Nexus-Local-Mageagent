@@ -265,6 +265,72 @@ What tools should be executed to complete this task? Output JSON array only:""")
     return None
 
 
+async def execute_extracted_tools(
+    tool_calls: list,
+    user_content: str,
+    initial_response: str,
+    max_iterations: int = 3
+) -> Dict[str, Any]:
+    """
+    Execute extracted tool calls and feed results back for a final response.
+    This is the shared tool execution logic used by ALL patterns.
+    """
+    if not tool_calls:
+        return {
+            "final_response": initial_response,
+            "observations": [],
+            "tools_executed": 0
+        }
+
+    from .tool_executor import ToolExecutor
+    executor = ToolExecutor()
+
+    all_observations = []
+
+    # Execute all tool calls
+    print(f"Executing {len(tool_calls)} extracted tool(s)...")
+    for i, tc in enumerate(tool_calls):
+        tool_name = tc.get("tool", "unknown")
+        print(f"  [{i+1}/{len(tool_calls)}] {tool_name}")
+
+        result = executor.execute(tc)
+        all_observations.append({
+            "tool": tool_name,
+            "arguments": tc.get("arguments", {}),
+            "result": result
+        })
+
+        if "error" in result:
+            print(f"    ❌ {result['error']}")
+        else:
+            print(f"    ✓ Success")
+
+    # Generate final response with tool results
+    print("Generating final response with tool results...")
+    obs_text = "\n\n".join([
+        f"**{o['tool']}** ({json.dumps(o['arguments'])}): ```{json.dumps(o['result'], indent=2)[:500]}```"
+        for o in all_observations
+    ])
+
+    final_messages = [
+        ChatMessage(role="system", content="You are a helpful assistant. Use the tool execution results provided to give an accurate, factual answer."),
+        ChatMessage(role="user", content=f"""Original task: {user_content}
+
+Tool execution results:
+{obs_text}
+
+Based on these ACTUAL results, provide your final answer:""")
+    ]
+
+    final_response = await generate_with_model("tools", final_messages, 2048, 0.3)
+
+    return {
+        "final_response": final_response,
+        "observations": all_observations,
+        "tools_executed": len(all_observations)
+    }
+
+
 def classify_task(prompt: str) -> str:
     """Classify task type for model routing"""
     coding_patterns = [
@@ -353,18 +419,30 @@ Please provide a corrected response addressing these issues."""
             "primary", revision_messages, max_tokens, temperature
         )
 
-    # Step 4: Extract tool calls via Hermes-3 if needed
+    # Step 4: Extract AND EXECUTE tool calls if needed
     tool_calls = None
+    tool_result = {"observations": [], "tools_executed": 0}
+    final_response = primary_response
+
     if needs_tool_extraction(user_content):
         print("Step 4: Hermes-3 Q8 extracting tool calls...")
         tool_calls = await extract_tool_calls(user_content, primary_response)
 
+        if tool_calls:
+            print("Step 5: EXECUTING extracted tools...")
+            tool_result = await execute_extracted_tools(
+                tool_calls, user_content, primary_response
+            )
+            final_response = tool_result["final_response"]
+
     return {
-        "response": primary_response,
+        "response": final_response,
         "validation": validation,
         "revised": needs_revision,
         "tool_calls": tool_calls,
-        "model_flow": "72B-Q8 -> 7B-validator -> hermes-3-Q8" if tool_calls else "72B-Q8 -> 7B-validator"
+        "observations": tool_result["observations"],
+        "tools_executed": tool_result["tools_executed"],
+        "model_flow": f"72B-Q8 -> 7B-validator -> hermes-3-Q8 -> exec ({tool_result['tools_executed']} tools)" if tool_calls else "72B-Q8 -> 7B-validator"
     }
 
 
@@ -408,20 +486,32 @@ Which is better? (A or B with brief reason):""")
     winner = "A" if judgment.strip().startswith("A") else "B"
     best_response = primary_response if winner == "A" else competitor_response
 
-    # Step 3: Extract tool calls via Hermes-3 if needed
+    # Step 3: Extract AND EXECUTE tool calls if needed
     tool_calls = None
+    tool_result = {"observations": [], "tools_executed": 0}
+    final_response = best_response
+
     if needs_tool_extraction(user_content):
         print("Step 3: Hermes-3 Q8 extracting tool calls...")
         tool_calls = await extract_tool_calls(user_content, best_response)
 
+        if tool_calls:
+            print("Step 4: EXECUTING extracted tools...")
+            tool_result = await execute_extracted_tools(
+                tool_calls, user_content, best_response
+            )
+            final_response = tool_result["final_response"]
+
     return {
-        "response": best_response,
+        "response": final_response,
         "winner": winner,
         "judgment": judgment,
         "solution_a": primary_response,
         "solution_b": competitor_response,
         "tool_calls": tool_calls,
-        "model_flow": f"72B + 32B -> 7B-judge -> hermes-3-Q8 (winner: {winner})" if tool_calls else f"72B + 32B -> 7B-judge (winner: {winner})"
+        "observations": tool_result["observations"],
+        "tools_executed": tool_result["tools_executed"],
+        "model_flow": f"72B + 32B -> 7B-judge -> exec ({tool_result['tools_executed']} tools, winner: {winner})" if tool_calls else f"72B + 32B -> 7B-judge (winner: {winner})"
     }
 
 
@@ -432,7 +522,7 @@ async def generate_hybrid(
 ) -> Dict[str, Any]:
     """
     Hybrid pattern: Qwen-72B Q8 for reasoning + Hermes-3 Q8 for tool execution
-    ALWAYS extracts tools via Hermes-3 for best capability.
+    ALWAYS extracts tools via Hermes-3 for best capability, then EXECUTES them.
     """
 
     user_content = messages[-1].content if messages else ""
@@ -443,16 +533,28 @@ async def generate_hybrid(
         "primary", messages, max_tokens, temperature
     )
 
-    # Step 2: ALWAYS extract tool calls via Hermes-3 (hybrid = best capability)
+    # Step 2: Extract AND EXECUTE tool calls via Hermes-3
     tool_calls = None
+    tool_result = {"observations": [], "tools_executed": 0}
+    final_response = primary_response
+
     if needs_tool_extraction(user_content):
         print("Step 2: Hermes-3 Q8 extracting tool calls...")
         tool_calls = await extract_tool_calls(user_content, primary_response)
 
+        if tool_calls:
+            print("Step 3: EXECUTING extracted tools...")
+            tool_result = await execute_extracted_tools(
+                tool_calls, user_content, primary_response
+            )
+            final_response = tool_result["final_response"]
+
     return {
-        "response": primary_response,
+        "response": final_response,
         "tool_calls": tool_calls,
-        "model_flow": "qwen-72b-q8 -> hermes-3-q8" if tool_calls else "qwen-72b-q8"
+        "observations": tool_result["observations"],
+        "tools_executed": tool_result["tools_executed"],
+        "model_flow": f"qwen-72b-q8 -> hermes-3-q8 -> exec ({tool_result['tools_executed']} tools)" if tool_calls else "qwen-72b-q8"
     }
 
 
@@ -681,43 +783,46 @@ async def chat_completions(request: ChatRequest):
             used_model = f"mageagent:execute ({result['model_flow']})"
 
         elif model_name == "mageagent:validated":
-            # Generate + validate pattern
+            # Generate + validate pattern (with real tool execution)
             result = await generate_with_validation(
                 request.messages,
                 request.max_tokens or 2048,
                 request.temperature or 0.7
             )
             response_text = result["response"]
-            # Include tool calls in response if present
-            if result.get("tool_calls"):
-                response_text += f"\n\n<tool_calls>\n{json.dumps(result['tool_calls'], indent=2)}\n</tool_calls>"
+            # Add execution summary if tools were run
+            if result.get("tools_executed", 0) > 0:
+                tools_summary = ", ".join([o["tool"] for o in result.get("observations", [])])
+                response_text += f"\n\n---\n*Executed {result['tools_executed']} tools: {tools_summary}*"
             used_model = f"mageagent:validated ({result.get('model_flow', '72B-Q8 -> 7B-validator')})"
 
         elif model_name == "mageagent:compete":
-            # Competing models pattern
+            # Competing models pattern (with real tool execution)
             result = await generate_competing(
                 request.messages,
                 request.max_tokens or 2048,
                 request.temperature or 0.7
             )
             response_text = result["response"]
-            # Include tool calls in response if present
-            if result.get("tool_calls"):
-                response_text += f"\n\n<tool_calls>\n{json.dumps(result['tool_calls'], indent=2)}\n</tool_calls>"
+            # Add execution summary if tools were run
+            if result.get("tools_executed", 0) > 0:
+                tools_summary = ", ".join([o["tool"] for o in result.get("observations", [])])
+                response_text += f"\n\n---\n*Executed {result['tools_executed']} tools: {tools_summary}*"
             winner = result.get('winner', '?')
             used_model = f"mageagent:compete ({result.get('model_flow', f'winner: {winner}')})"
 
         elif model_name == "mageagent:hybrid":
-            # Hybrid pattern: Qwen-72B Q8 reasoning + Hermes-3 Q8 tools
+            # Hybrid pattern: Qwen-72B Q8 reasoning + Hermes-3 Q8 tools (with real execution)
             result = await generate_hybrid(
                 request.messages,
                 request.max_tokens or 2048,
                 request.temperature or 0.7
             )
             response_text = result["response"]
-            # Include tool calls in response if present
-            if result.get("tool_calls"):
-                response_text += f"\n\n<tool_calls>\n{json.dumps(result['tool_calls'], indent=2)}\n</tool_calls>"
+            # Add execution summary if tools were run
+            if result.get("tools_executed", 0) > 0:
+                tools_summary = ", ".join([o["tool"] for o in result.get("observations", [])])
+                response_text += f"\n\n---\n*Executed {result['tools_executed']} tools: {tools_summary}*"
             used_model = f"mageagent:hybrid ({result['model_flow']})"
 
         elif model_name == "mageagent:auto":
@@ -726,26 +831,28 @@ async def chat_completions(request: ChatRequest):
             print(f"Task classified as: {task_type}")
 
             if task_type == "coding":
-                # Use validation pattern for coding tasks (includes Hermes-3 tools)
+                # Use validation pattern for coding tasks (with real tool execution)
                 result = await generate_with_validation(
                     request.messages,
                     request.max_tokens or 2048,
                     request.temperature or 0.7
                 )
                 response_text = result["response"]
-                if result.get("tool_calls"):
-                    response_text += f"\n\n<tool_calls>\n{json.dumps(result['tool_calls'], indent=2)}\n</tool_calls>"
+                if result.get("tools_executed", 0) > 0:
+                    tools_summary = ", ".join([o["tool"] for o in result.get("observations", [])])
+                    response_text += f"\n\n---\n*Executed {result['tools_executed']} tools: {tools_summary}*"
                 used_model = f"mageagent:auto->validated ({result.get('model_flow', '')})"
             elif task_type == "reasoning":
-                # Use hybrid for reasoning (includes Hermes-3 tools)
+                # Use hybrid for reasoning (with real tool execution)
                 result = await generate_hybrid(
                     request.messages,
                     request.max_tokens or 2048,
                     request.temperature or 0.7
                 )
                 response_text = result["response"]
-                if result.get("tool_calls"):
-                    response_text += f"\n\n<tool_calls>\n{json.dumps(result['tool_calls'], indent=2)}\n</tool_calls>"
+                if result.get("tools_executed", 0) > 0:
+                    tools_summary = ", ".join([o["tool"] for o in result.get("observations", [])])
+                    response_text += f"\n\n---\n*Executed {result['tools_executed']} tools: {tools_summary}*"
                 used_model = f"mageagent:auto->hybrid ({result.get('model_flow', '')})"
             else:
                 # Use fast validator for simple tasks (no tools needed)

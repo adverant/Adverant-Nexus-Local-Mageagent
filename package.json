@@ -1,6 +1,6 @@
 {
   "name": "@adverant/mageagent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Multi-Model AI Orchestration for Apple Silicon - Intelligent task routing with MLX models",
   "keywords": [
     "ai",
@@ -12,7 +12,9 @@
     "qwen",
     "hermes",
     "local-ai",
-    "claude-code"
+    "claude-code",
+    "menubar",
+    "macos"
   ],
   "homepage": "https://github.com/adverant/nexus-local-mageagent#readme",
   "bugs": {
@@ -31,6 +33,7 @@
   "files": [
     "bin/",
     "mageagent/",
+    "menubar-app/",
     "scripts/",
     "config/",
     "docs/",
@@ -42,9 +45,19 @@
     "postinstall": "node bin/postinstall.js",
     "start": "node bin/mageagent.js start",
     "stop": "node bin/mageagent.js stop",
+    "restart": "node bin/mageagent.js restart",
     "status": "node bin/mageagent.js status",
-    "install-models": "node bin/mageagent.js install",
-    "test": "node bin/mageagent.js test"
+    "logs": "node bin/mageagent.js logs",
+    "test": "node bin/mageagent.js test",
+    "install:all": "npm run install:deps && npm run install:models && npm run install:menubar && npm run install:launchagent",
+    "install:deps": "pip install -r requirements.txt",
+    "install:models": "node bin/mageagent.js install-models",
+    "install:menubar": "cd menubar-app && ./build.sh",
+    "install:launchagent": "node bin/install-launchagent.js",
+    "uninstall:menubar": "rm -rf /Applications/MageAgentMenuBar.app",
+    "uninstall:launchagent": "launchctl unload ~/Library/LaunchAgents/ai.adverant.mageagent.plist 2>/dev/null; launchctl unload ~/Library/LaunchAgents/ai.adverant.mageagent.menubar.plist 2>/dev/null",
+    "setup": "npm run install:all && npm run start",
+    "doctor": "node bin/mageagent.js doctor"
   },
   "engines": {
     "node": ">=18.0.0"
