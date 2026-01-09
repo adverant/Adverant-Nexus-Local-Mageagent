@@ -12,6 +12,15 @@
 
   *Run 4 specialized models together. Get results that rival cloud AI. Pay nothing.*
 
+  ---
+
+  ### Download & Install
+
+  [![Download DMG](https://img.shields.io/badge/Download-DMG_Installer-blue?style=for-the-badge&logo=apple)](https://github.com/adverant/nexus-local-mageagent/releases/latest/download/MageAgent-2.0.0.dmg)
+  [![npm](https://img.shields.io/badge/npm-install_--g_@adverant/mageagent-red?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/@adverant/mageagent)
+
+  ---
+
   [Quick Start](#30-second-install) • [Why MageAgent](#why-mageagent) • [Patterns](#orchestration-patterns) • [Tool Execution](#real-tool-execution) • [Contributing](CONTRIBUTING.md)
 </div>
 
